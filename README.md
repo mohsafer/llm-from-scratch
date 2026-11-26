@@ -357,7 +357,7 @@ minimind/
 --use_tensorboard       --tb_dir ../runs        --use_wandb   (TB wins if both set)
 --from_weight pretrain  --from_resume 1
 ```
-
+main project [MinMind](https://github.com/jingyaogong/minimind/)
 ---
 
 Released under the **Apache 2.0** license. [MinMind](https://github.com/jingyaogong/minimind/) is a reproducible, readable starting point for understanding — and training — language models from 0 to 1.
