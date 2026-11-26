@@ -7,7 +7,6 @@ from datasets import load_dataset, Features, Sequence, Value
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def pre_processing_chat(conversations, add_system_ratio=0.2):
-    # tool use 数据完整保留不做处理
     if any(conv.get('tools') for conv in conversations): return conversations
 
     SYSTEM_PROMPTS = [
@@ -22,14 +21,12 @@ def pre_processing_chat(conversations, add_system_ratio=0.2):
         "You are a knowledgeable AI. Try your best to provide accurate information.",
         "You are minimind, a small but useful language model."
     ]
-    # 概率性添加system
     if conversations[0].get('role') != 'system':
         if random.random() < add_system_ratio:
             return [{'role': 'system', 'content': random.choice(SYSTEM_PROMPTS)}] + conversations
     return conversations
 
 def post_processing_chat(prompt_content, empty_think_ratio=0.2, remove_empty_think=None):
-    # 以80%概率移除空思考标签
     if '<think>\n\n</think>\n\n' in prompt_content:
         if remove_empty_think is None:
             remove_empty_think = random.random() > empty_think_ratio
@@ -114,11 +111,6 @@ class SFTDataset(Dataset):
         input_ids = self.tokenizer(prompt).input_ids[:self.max_length]
         input_ids += [self.tokenizer.pad_token_id] * (self.max_length - len(input_ids))
         labels = self.generate_labels(input_ids)
-        # # === 调试打印 ===
-        # print(f"\n--- Sample {index} ---")
-        # for i, (x, y) in enumerate(zip(input_ids[:-1], labels[1:])):
-        #     print(f"{i:3d}: X={self.tokenizer.decode([x])!r:16s} ---> Y={self.tokenizer.decode([input_ids[i+1]])!r:16s} label={y}")
-        # # ================
         return torch.tensor(input_ids, dtype=torch.long), torch.tensor(labels, dtype=torch.long)
 
 
@@ -137,8 +129,8 @@ class DPODataset(Dataset):
 
     def __getitem__(self, index):
         sample = self.samples[index]
-        chosen = sample['chosen']  # 是一个 list，里面包含若干 {role, content}
-        rejected = sample['rejected']  # 同上
+        chosen = sample['chosen']
+        rejected = sample['rejected']
         chosen_prompt = self.tokenizer.apply_chat_template(
             chosen, tokenize=False, add_generation_prompt=False
         )
@@ -201,7 +193,7 @@ class RLAIFDataset(Dataset):
         super().__init__()
         self.tokenizer = tokenizer
         self.max_length = max_length
-        self.thinking_ratio = thinking_ratio  # 按概率开启 thinking
+        self.thinking_ratio = thinking_ratio
         self.samples = load_dataset('json', data_files=jsonl_path, split='train')
         self.bos_id = tokenizer(f'{tokenizer.bos_token}assistant', add_special_tokens=False).input_ids
         self.eos_id = tokenizer(f'{tokenizer.eos_token}', add_special_tokens=False).input_ids

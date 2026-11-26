@@ -73,7 +73,6 @@ st.markdown("""
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# 多语言文本
 LANG_TEXTS = {
     'zh': {
         'settings': '模型设定调整',
@@ -107,7 +106,6 @@ def get_text(key):
     lang = st.session_state.get('lang', 'en')
     return LANG_TEXTS.get(lang, {}).get(key, LANG_TEXTS['zh'].get(key, key))
 
-# 工具定义
 TOOLS = [
     {"type": "function", "function": {"name": "calculate_math", "description": "计算数学表达式", "parameters": {"type": "object", "properties": {"expression": {"type": "string", "description": "数学表达式"}}, "required": ["expression"]}}},
     {"type": "function", "function": {"name": "get_current_time", "description": "获取当前时间", "parameters": {"type": "object", "properties": {"timezone": {"type": "string", "default": "Asia/Shanghai"}}, "required": []}}},
@@ -151,7 +149,6 @@ def execute_tool(tool_name, args):
 
 
 def process_assistant_content(content, is_streaming=False):
-    # 处理tool_call标签，格式化显示
     if '<tool_call>' in content:
         def format_tool_call(match):
             try:
@@ -163,7 +160,6 @@ def process_assistant_content(content, is_streaming=False):
                 return match.group(0)
         content = re.sub(r'<tool_call>(.*?)</tool_call>', format_tool_call, content, flags=re.DOTALL)
     
-    # 流式生成且开启思考时，一开始就放到折叠里
     if is_streaming and st.session_state.get('enable_thinking', False) and '</think>' not in content and '<think>' not in content:
         m = re.search(r'(\n\n(?:我是|您好|你好)[^\n]*)', content)
         if m and m.start(1) > 5:
@@ -177,7 +173,7 @@ def process_assistant_content(content, is_streaming=False):
     if '<think>' in content and '</think>' in content:
         def format_think(match):
             think_content = match.group(2)
-            if think_content.replace('\n', '').strip():  # 不是全换行
+            if think_content.replace('\n', '').strip():
                 return f'<details open style="border-left: 2px solid #666; padding-left: 12px; margin: 8px 0;"><summary style="cursor: pointer; color: #888;">已思考</summary><div style="color: #aaa; font-size: 0.95em; margin-top: 8px; max-height: 100px; overflow-y: auto;">{think_content.strip()}</div></details>'
             return ''
         content = re.sub(r'(<think>)(.*?)(</think>)', format_think, content, flags=re.DOTALL)
@@ -241,7 +237,6 @@ def regenerate_answer(index):
     st.rerun()
 
 
-# 动态扫描模型目录
 script_dir = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATHS = {}
 for d in sorted(os.listdir(script_dir), reverse=True):
@@ -252,14 +247,12 @@ for d in sorted(os.listdir(script_dir), reverse=True):
 if not MODEL_PATHS:
     MODEL_PATHS = {"No models found": ["", "No models"]}
 
-# 模型选择
 selected_model = st.sidebar.selectbox('Model', list(MODEL_PATHS.keys()), index=0)
 model_path = MODEL_PATHS[selected_model][0]
 slogan = f"我是 {MODEL_PATHS[selected_model][1]}，有什么可以帮你的？" if st.session_state.get('lang', 'en') == 'zh' else f"I am {MODEL_PATHS[selected_model][1]}, how can I help you?"
 
 st.sidebar.markdown('<hr style="margin: 12px 0 16px 0;">', unsafe_allow_html=True)
 
-# 语言选择
 lang_options = {'中文': 'zh', 'English': 'en'}
 current_lang = st.session_state.get('lang', 'en')
 lang_index = 0 if current_lang == 'zh' else 1
@@ -270,14 +263,12 @@ if lang_options[lang_label] != current_lang:
 
 st.sidebar.markdown('<hr style="margin: 12px 0 16px 0;">', unsafe_allow_html=True)
 
-# 参数设置
 st.session_state.history_chat_num = st.sidebar.slider(get_text('history_rounds'), 0, 8, 0, step=2)
 st.session_state.max_new_tokens = st.sidebar.slider(get_text('max_length'), 256, 8192, 8192, step=1)
 st.session_state.temperature = st.sidebar.slider(get_text('temperature'), 0.6, 1.2, 0.90, step=0.01)
 
 st.sidebar.markdown('<hr style="margin: 12px 0 16px 0;">', unsafe_allow_html=True)
 
-# 功能开关
 st.session_state.enable_thinking = st.sidebar.checkbox(get_text('thinking'), value=False, help=get_text('think_tip'))
 st.session_state.selected_tools = []
 with st.sidebar.expander(get_text('tools')):

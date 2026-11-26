@@ -4,7 +4,7 @@ import sys
 __package__ = "trainer"
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-import datasets  # noqa: F401  # Windows pyarrow/torch DLL conflict workaround (issue #771)
+import datasets
 import argparse
 import math
 import re
@@ -26,18 +26,14 @@ from trainer.rollout_engine import create_rollout_engine
 warnings.filterwarnings('ignore')
 
 
-# Custom Critic model, inheriting from MiniMindLM
 class CriticModel(MiniMindForCausalLM):
     def __init__(self, params):
         super().__init__(params)
-        # lm_head does not participate in forward and only shares weights with embed_tokens via tie_word_embeddings; after unbinding, DDP would report unused parameters
         self.value_head = nn.Linear(params.hidden_size, 1)
 
     def forward(self, input_ids=None, attention_mask=None, **kwargs):
-        # Use the base model to get hidden states
         outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, **kwargs)
         hidden_states = self.model.norm(outputs[0])
-        # Use value_head to get value estimates
         values = self.value_head(hidden_states).squeeze(-1)
         return values
 
@@ -75,9 +71,9 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
     grad_accum_step = 0
 
     for step, batch in enumerate(loader, start=start_step + 1):
-        prompts = batch["prompt"]  # list[str], length B
+        prompts = batch["prompt"]
         enc = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True, max_length=args.max_seq_len,
-                        padding_side="left").to(args.device)  # input_ids: [B, P], attention_mask: [B, P]
+                        padding_side="left").to(args.device)
 
         rollout_result = rollout_engine.rollout(
             prompt_ids=enc.input_ids,
@@ -91,7 +87,7 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
         prompt_lens = rollout_result.prompt_lens.to(args.device)
         responses_text = rollout_result.completions
         old_resp_logp = rollout_result.per_token_logps.to(args.device)
-        rewards = calculate_rewards(prompts, responses_text, reward_model)  # [B]
+        rewards = calculate_rewards(prompts, responses_text, reward_model)
 
         if args.debug_mode and is_main_process() and step % args.debug_interval == 0:
             for i in range(len(prompts)):
@@ -107,8 +103,8 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                 Logger(f"[DEBUG] reward={rewards[i].item():.4f}")
                 Logger('='*100)
 
-        full_mask = (gen_out != tokenizer.pad_token_id).long()  # [B, P+R]
-        labels = gen_out[:, 1:].clone()  # [B, P+R-1]
+        full_mask = (gen_out != tokenizer.pad_token_id).long()
+        labels = gen_out[:, 1:].clone()
         B = len(prompts)
         resp_labels = completion_ids
         resp_idx = torch.arange(resp_labels.size(1), device=gen_out.device).unsqueeze(0)
@@ -121,15 +117,15 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
         resp_policy_mask = ((resp_idx < resp_lengths.unsqueeze(1)) & resp_pad_mask).float()
         resp_value_mask = resp_policy_mask.clone()
 
-        with torch.no_grad():  # The Rollout phase only needs inference to get old_logp and old_values; detaching gradients saves VRAM
+        with torch.no_grad():
             critic_for_rollout = critic_model.module if isinstance(critic_model, DistributedDataParallel) else critic_model
             values_seq = critic_for_rollout(input_ids=gen_out, attention_mask=full_mask)
             old_resp_values = values_seq.gather(1, logp_pos) * resp_value_mask
             
             ref_resp_logp = F.log_softmax(ref_model(input_ids=gen_out, attention_mask=full_mask).logits[:, :-1], dim=-1).gather(2, labels.unsqueeze(-1)).squeeze(-1).gather(1, logp_pos)
             token_rewards = torch.zeros_like(old_resp_logp)
-            last_idx = resp_lengths - 1  # [B]
-            token_rewards[torch.arange(B, device=args.device)[valid_resp], last_idx[valid_resp]] += rewards[valid_resp]  # Add external reward at the end
+            last_idx = resp_lengths - 1
+            token_rewards[torch.arange(B, device=args.device)[valid_resp], last_idx[valid_resp]] += rewards[valid_resp]
 
             gen_len = old_resp_values.size(1); lastgaelam = torch.zeros(B, device=args.device); advs_rev = []
             for t in reversed(range(gen_len)):
@@ -137,8 +133,8 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                 delta = token_rewards[:, t] + args.gamma * nv - old_resp_values[:, t]
                 lastgaelam = delta + args.gamma * args.lam * lastgaelam
                 advs_rev.append(lastgaelam)
-            advantages = torch.stack(advs_rev[::-1], dim=1)  # [B, R]
-            returns = advantages + old_resp_values  # [B, R]
+            advantages = torch.stack(advs_rev[::-1], dim=1)
+            returns = advantages + old_resp_values
 
             adv_mean = (advantages * resp_policy_mask).sum() / resp_policy_mask.sum().clamp(min=1)
             adv_var = ((advantages - adv_mean) ** 2 * resp_policy_mask).sum() / resp_policy_mask.sum().clamp(min=1)
@@ -170,7 +166,6 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
 
                 log_ratio = mb_resp_logp - old_resp_logp[inds]
 
-                # Toggleable diagnostics: observe the difference between the current minibatch and old logp in the first minibatch of the first epoch.
                 if args.debug_log_ratio and ppo_epoch == 0 and i == 0 and is_main_process():
                     _lr = log_ratio.detach()
                     _m = resp_policy_mask[inds].bool()
@@ -184,7 +179,6 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                                f"training={actor_model.training}")
                 approx_kl = (0.5 * (log_ratio ** 2) * resp_policy_mask[inds]).sum() / resp_policy_mask[inds].sum().clamp(min=1)
                 
-                # Synchronize approx_kl across all ranks to prevent a DDP deadlock caused by one rank breaking while others continue
                 approx_kl_val = approx_kl.detach().clone()
                 if dist.is_initialized():
                     dist.all_reduce(approx_kl_val, op=dist.ReduceOp.AVG)
@@ -209,7 +203,6 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                 kl = approx_kl_val
                 kl_ref = kl_ref_penalty.detach()
 
-                # On early stop we must keep the forward-backward loop intact, so only zero out the loss without breaking DDP communication
                 if stop_ppo:
                     loss = (policy_loss + args.vf_coef * value_loss + aux_loss) * 0.0
                 else:
@@ -284,7 +277,6 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
             actor_state = raw_actor.state_dict()
             torch.save({k: v.half().cpu() for k, v in actor_state.items()}, ckp)
             
-            # Use lm_checkpoint to save the full state (including the critic)
             lm_checkpoint(lm_config, weight=args.save_weight, model=actor_model, optimizer=actor_optimizer, 
                          epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints',
                          scheduler=actor_scheduler, critic_model=critic_model, 
@@ -343,23 +335,19 @@ if __name__ == "__main__":
     parser.add_argument("--sglang_shared_path", type=str, default="./sglang_ckpt_ppo", help="SGLang shared storage path")
     args = parser.parse_args()
 
-    # ========== 1. Initialize environment and random seed ==========
     local_rank = init_distributed_mode()
     if dist.is_initialized(): args.device = f"cuda:{local_rank}"
     setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
     
-    # ========== 2. Configure directories, model params, check ckp ==========
     os.makedirs(args.save_dir, exist_ok=True)
     lm_config = MiniMindConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=bool(args.use_moe))
     ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
     
-    # ========== 3. Set up mixed precision ==========
     device_type = "cuda" if torch.device(args.device).type == "cuda" else "cpu"
     args.dtype = resolve_dtype(args.dtype, args.device)
     dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
     autocast_ctx = nullcontext() if device_type == "cpu" else torch.cuda.amp.autocast(dtype=dtype)
     
-    # ========== 4. Configure wandb ==========
     wandb = None
     if args.use_wandb and is_main_process():
         import swanlab as wandb
@@ -368,9 +356,7 @@ if __name__ == "__main__":
         wandb_run_name = f"MiniMind-PPO-Epoch-{args.epochs}-BS-{args.batch_size}-LR-{args.learning_rate}"
         wandb.init(project=args.wandb_project, name=wandb_run_name, id=wandb_id, resume=resume)
     
-    # ========== 5. Initialize models and data ==========
     base_weight = args.from_weight
-    # Actor model
     actor_model, tokenizer = init_model(lm_config, base_weight, device=args.device)
     ref_model, _ = init_model(lm_config, base_weight, device=args.device)
     ref_model = ref_model.eval().requires_grad_(False)
@@ -381,7 +367,6 @@ if __name__ == "__main__":
     critic_model.load_state_dict(state_dict, strict=False)
     critic_model = critic_model.to(args.device)
     reward_model = LMForRewardModel(args.reward_model_path, device=args.device, dtype=torch.float16)
-    # Rollout engine
     rollout_engine = create_rollout_engine(
         engine_type=args.rollout_engine,
         policy_model=actor_model,
@@ -414,17 +399,14 @@ if __name__ == "__main__":
         start_epoch = ckp_data['epoch']
         start_step = ckp_data.get('step', 0)
     
-    # ========== 7. Compile and wrap for distributed training ==========
     if args.use_compile == 1:
         actor_model = torch.compile(actor_model)
         Logger('torch.compile enabled')
     if dist.is_initialized():
-        # freqs_cos/freqs_sin are deterministically computed from config on each rank, so the default per-step broadcast is pure waste
         actor_model = DistributedDataParallel(actor_model, device_ids=[local_rank], broadcast_buffers=False)
         critic_model = DistributedDataParallel(critic_model, device_ids=[local_rank], broadcast_buffers=False)
     rollout_engine.update_policy(actor_model)
     
-    # ========== 8. Start training ==========
     for epoch in range(start_epoch, args.epochs):
         train_sampler and train_sampler.set_epoch(epoch)
         setup_seed(42 + epoch); indices = torch.randperm(len(train_ds)).tolist()
@@ -437,7 +419,6 @@ if __name__ == "__main__":
         else:
             ppo_train_epoch(epoch, loader, len(loader), rollout_engine, ref_model, actor_scheduler, critic_scheduler, reward_model, 0, wandb)
     
-    # ========== 9. Clean up distributed processes ==========
     if dist.is_initialized():
         dist.barrier()
         dist.destroy_process_group()

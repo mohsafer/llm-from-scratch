@@ -4,7 +4,7 @@ import sys
 __package__ = "trainer"
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-import datasets  # noqa: F401  # Windows pyarrow/torch DLL conflict workaround (issue #771)
+import datasets
 import argparse
 import time
 import warnings
@@ -53,20 +53,16 @@ def train_epoch(epoch, loader, iters, teacher_model, lm_config_student, start_st
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
 
-        # Forward pass (student model)
         with autocast_ctx:
             res = model(input_ids)
             student_logits = res.logits[..., :-1, :].contiguous()
 
-        # Teacher model forward pass (only in eval & no_grad)
         if teacher_model is not None:
             with torch.no_grad():
                 teacher_logits = teacher_model(input_ids).logits[..., :-1, :].contiguous()
                 vocab_size_student = student_logits.size(-1)
                 teacher_logits = teacher_logits[..., :vocab_size_student]
 
-        # ========== Compute loss ==========
-        # 1) Ground-Truth CE Loss
         shift_labels = labels[..., 1:].contiguous()
         loss_mask_flat = loss_mask.view(-1)
         ce_loss = F.cross_entropy(
@@ -79,7 +75,6 @@ def train_epoch(epoch, loader, iters, teacher_model, lm_config_student, start_st
         if lm_config_student.use_moe: ce_loss = ce_loss_raw + res.aux_loss
         else: ce_loss = ce_loss_raw
 
-        # 2) Distillation Loss
         if teacher_model is not None:
             distill_loss = distillation_loss(
                 student_logits.view(-1, student_logits.size(-1))[loss_mask_flat == 1],
@@ -89,7 +84,6 @@ def train_epoch(epoch, loader, iters, teacher_model, lm_config_student, start_st
         else:
             distill_loss = torch.tensor(0.0, device=args.device)
 
-        # 3) Total loss = alpha * CE + (1-alpha) * Distill
         loss = (alpha * ce_loss + (1 - alpha) * distill_loss) / args.accumulation_steps
 
         scaler.scale(loss).backward()
@@ -137,7 +131,6 @@ def train_epoch(epoch, loader, iters, teacher_model, lm_config_student, start_st
 
 
 if __name__ == "__main__":
-    # Simulates distilling a dense model with an MoE model; a larger teacher_hidden_size model can also distill a smaller student_hidden_size one
     parser = argparse.ArgumentParser(description="MiniMind Knowledge Distillation")
     parser.add_argument("--save_dir", type=str, default="../out", help="Directory for saving the model")
     parser.add_argument('--save_weight', default='full_dist', type=str, help="Prefix name for saving weights")
@@ -170,24 +163,20 @@ if __name__ == "__main__":
     parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1], help="Whether to use torch.compile for acceleration (0=no, 1=yes)")
     args = parser.parse_args()
 
-    # ========== 1. Initialize environment and random seed ==========
     local_rank = init_distributed_mode()
     if dist.is_initialized(): args.device = f"cuda:{local_rank}"
     setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
     
-    # ========== 2. Configure directories, model params, check ckp ==========
     os.makedirs(args.save_dir, exist_ok=True)
     lm_config_student = MiniMindConfig(hidden_size=args.student_hidden_size, num_hidden_layers=args.student_num_layers, use_moe=bool(args.student_use_moe))
     lm_config_teacher = MiniMindConfig(hidden_size=args.teacher_hidden_size, num_hidden_layers=args.teacher_num_layers, use_moe=bool(args.teacher_use_moe))
     ckp_data = lm_checkpoint(lm_config_student, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
     
-    # ========== 3. Set up mixed precision ==========
     device_type = "cuda" if torch.device(args.device).type == "cuda" else "cpu"
     args.dtype = resolve_dtype(args.dtype, args.device)
     dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
     autocast_ctx = nullcontext() if device_type == "cpu" else torch.cuda.amp.autocast(dtype=dtype)
     
-    # ========== 4. Configure wandb ==========
     wandb = None
     if args.use_wandb and is_main_process():
         import swanlab as wandb
@@ -196,7 +185,6 @@ if __name__ == "__main__":
         wandb_run_name = f"MiniMind-Distill-S{args.student_hidden_size}T{args.teacher_hidden_size}-Epoch-{args.epochs}-BS-{args.batch_size}-LR-{args.learning_rate}"
         wandb.init(project=args.wandb_project, name=wandb_run_name, id=wandb_id, resume=resume)
     
-    # ========== 5. Define student and teacher models ==========
     model, tokenizer = init_model(lm_config_student, args.from_student_weight, device=args.device)
     Logger(f'Total student model parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.3f} M')
     teacher_model, _ = init_model(lm_config_teacher, args.from_teacher_weight, device=args.device)
@@ -208,7 +196,6 @@ if __name__ == "__main__":
     scaler = torch.cuda.amp.GradScaler(enabled=(args.dtype == 'float16'))
     optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
     
-    # ========== 6. Restore state from ckp ==========
     start_epoch, start_step = 0, 0
     if ckp_data:
         model.load_state_dict(ckp_data['model'])
@@ -217,14 +204,12 @@ if __name__ == "__main__":
         start_epoch = ckp_data['epoch']
         start_step = ckp_data.get('step', 0)
     
-    # ========== 7. Compile and wrap for distributed training ==========
     if args.use_compile == 1:
         model = torch.compile(model)
         Logger('torch.compile enabled')
     if dist.is_initialized():
         model = DistributedDataParallel(model, device_ids=[local_rank])
     
-    # ========== 8. Start training ==========
     for epoch in range(start_epoch, args.epochs):
         train_sampler and train_sampler.set_epoch(epoch)
         setup_seed(42 + epoch); indices = torch.randperm(len(train_ds)).tolist()
@@ -237,7 +222,6 @@ if __name__ == "__main__":
         else:
             train_epoch(epoch, loader, len(loader), teacher_model, lm_config_student, 0, wandb, args.alpha, args.temperature)
     
-    # ========== 9. Clean up distributed processes ==========
     if dist.is_initialized():
         dist.barrier()
         dist.destroy_process_group()

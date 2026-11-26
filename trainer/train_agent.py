@@ -4,7 +4,7 @@ import sys
 __package__ = "trainer"
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-import datasets  # noqa: F401  # Windows pyarrow/torch DLL conflict workaround (issue #771)
+import datasets
 import re
 import gc
 import json
@@ -28,9 +28,7 @@ from trainer.rollout_engine import create_rollout_engine, compute_per_token_logp
 
 warnings.filterwarnings('ignore')
 
-# ================================ Tools and Reward = Start ================================
 
-# ======== Tool definitions ========
 TOOLS = [
     {"type": "function", "function": {"name": "calculate_math", "description": "计算数学表达式", "parameters": {"type": "object", "properties": {"expression": {"type": "string"}}, "required": ["expression"]}}},
     {"type": "function", "function": {"name": "unit_converter", "description": "单位换算", "parameters": {"type": "object", "properties": {"value": {"type": "number"}, "from_unit": {"type": "string"}, "to_unit": {"type": "string"}}, "required": ["value", "from_unit", "to_unit"]}}},
@@ -40,14 +38,12 @@ TOOLS = [
     {"type": "function", "function": {"name": "translate_text", "description": "翻译文本", "parameters": {"type": "object", "properties": {"text": {"type": "string"}, "target_language": {"type": "string"}}, "required": ["text", "target_language"]}}},
 ]
 
-# ======== Mock data ========
 WEATHER_DATA = {"北京": ("28°C", "晴"), "上海": ("15°C", "多云"), "广州": ("32°C", "闷热"), "深圳": ("30°C", "晴"), "杭州": ("22°C", "阴"), "成都": ("18°C", "小雨"), "武汉": ("25°C", "多云"), "南京": ("20°C", "晴"), "西安": ("16°C", "大风"), "重庆": ("26°C", "阴"), "Tokyo": ("12°C", "晴"), "New York": ("8°C", "多云"), "London": ("5°C", "小雨"), "Paris": ("10°C", "阴"), "Sydney": ("25°C", "晴朗")}
 TIME_DATA = {"Asia/Shanghai": "2025-03-07 14:30:00", "America/New_York": "2025-03-07 01:30:00", "Europe/London": "2025-03-07 06:30:00", "Asia/Tokyo": "2025-03-07 15:30:00", "Europe/Paris": "2025-03-07 07:30:00", "Australia/Sydney": "2025-03-07 17:30:00"}
 EXCHANGE_DATA = {("USD", "CNY"): 7.21, ("EUR", "CNY"): 7.85, ("GBP", "CNY"): 9.12, ("JPY", "CNY"): 0.048, ("USD", "EUR"): 0.92, ("USD", "GBP"): 0.79, ("CNY", "JPY"): 20.83, ("AUD", "CNY"): 4.72}
 TRANSLATE_DATA = {("你好世界", "english"): "Hello World", ("Good morning", "chinese"): "早上好", ("今天天气真好", "english"): "The weather is nice today", ("I love programming", "chinese"): "我喜欢编程", ("机器学习很有趣", "english"): "Machine learning is interesting", ("Happy birthday", "chinese"): "生日快乐"}
 UNIT_DATA = {"km_miles": 0.621371, "miles_km": 1.60934, "kg_pounds": 2.20462, "pounds_kg": 0.453592, "meters_feet": 3.28084, "feet_meters": 0.3048, "celsius_fahrenheit": 1.8, "fahrenheit_celsius": 0.5556}
 
-# ======== Mock execution ========
 MOCK_RESULTS = {
     "calculate_math": lambda args: {"result": str(safe_math_eval(args.get("expression", "0")))},
     "unit_converter": lambda args: {"result": round(float(args.get("value", 0)) * UNIT_DATA.get(f"{args.get('from_unit', '').lower()}_{args.get('to_unit', '').lower()}", 1), 4)},
@@ -57,7 +53,6 @@ MOCK_RESULTS = {
     "translate_text": lambda args: {"translated_text": TRANSLATE_DATA.get((args.get("text"), args.get("target_language")), args.get("text", ""))},
 }
 
-# ======== Argument validation ========
 CHECK_ARGS = {
     "calculate_math": lambda a: bool(a.get("expression")),
     "unit_converter": lambda a: a.get("value") is not None and a.get("from_unit") and a.get("to_unit"),
@@ -67,7 +62,6 @@ CHECK_ARGS = {
     "translate_text": lambda a: bool(a.get("text")) and bool(a.get("target_language")),
 }
 
-# ======== Tool call parsing and execution ========
 def parse_tool_calls(text):
     calls = []
     for m in re.findall(r'<tool_call>(.*?)</tool_call>', text, re.DOTALL):
@@ -92,7 +86,6 @@ def execute_tool(name, args, valid_names=None):
     except Exception as e:
         return {"error": f"工具执行失败: {str(e)[:80]}"}
 
-# ======== Multi-turn Rollout ========
 def rollout_single(rollout_engine, tokenizer, messages, tools, max_turns=3, max_new_tokens=256, thinking_ratio=0.5, device="cuda"):
     valid_names = {t['function']['name'] for t in tools} if tools else set()
     all_outputs = []
@@ -134,7 +127,7 @@ def rollout_single(rollout_engine, tokenizer, messages, tools, max_turns=3, max_
         messages.append(assistant_message)
         for call in calls:
             result = execute_tool(call["name"], call["arguments"], valid_names)
-            result_str = json.dumps(result, ensure_ascii=False)[:2048]  # Prevent astronomically large numbers from overflowing the tokenizer
+            result_str = json.dumps(result, ensure_ascii=False)[:2048]
             messages.append({"role": "tool", "content": result_str})
 
         marker = f"<|agent_observation_{id(messages)}_{len(response_ids)}|>"
@@ -180,7 +173,6 @@ def rollout_batch(rollout_engine, tokenizer, messages_batch, tools_batch, num_ge
             all_unfinished.append(unfinished)
     return all_completions, all_contexts, all_prompt_ids, all_response_ids, all_response_masks, all_response_old_logps, all_turn_outputs, all_unfinished
 
-# ======== Reward calculation ========
 def validate_gt_in_text(text, gt_list):
     text, text_num = str(text), str(text).replace(',', '')
     nums = [float(x) for x in re.findall(r'(?<![A-Za-z0-9_.])[-+]?\d+(?:\.\d+)?(?![A-Za-z0-9_]|\.\d)', text_num)]
@@ -198,15 +190,14 @@ def calculate_rewards(prompts, completions, gt_batch, tools_batch, num_gen, rewa
         answer = turn_answers[-1] if turn_answers else response.strip()
         valid_names = {t['function']['name'] for t in tools} if tools else set()
         tool_calls = []
-        for turn_answer in turn_answers: tool_calls.extend(parse_tool_calls(turn_answer))  # Parse tool calls
-        reward -= 0.5 * sum(abs(turn.count('<tool_call>') - turn.count('</tool_call>')) for turn in turn_answers)  # Penalty for unbalanced tags
-        # -------- No tool calls: format + reward bonus --------
+        for turn_answer in turn_answers: tool_calls.extend(parse_tool_calls(turn_answer))
+        reward -= 0.5 * sum(abs(turn.count('<tool_call>') - turn.count('</tool_call>')) for turn in turn_answers)
         if not tool_calls:
-            reward += 0.5 if 5 <= len(response.strip()) <= 800 else -0.5  # Length score
+            reward += 0.5 if 5 <= len(response.strip()) <= 800 else -0.5
             if '</think>' in response:
                 think, answer = response.split('</think>', 1)
-                reward += 1.0 if 20 <= len(think.strip()) <= 300 else -0.5  # Thinking length score
-                reward += 0.25 if response.count('</think>') == 1 else -0.25  # Thinking closure score
+                reward += 1.0 if 20 <= len(think.strip()) <= 300 else -0.5
+                reward += 0.25 if response.count('</think>') == 1 else -0.25
                 answer = answer.strip()
             if reward_model is not None:
                 prompt = prompts[sample_idx]
@@ -214,10 +205,9 @@ def calculate_rewards(prompts, completions, gt_batch, tools_batch, num_gen, rewa
                 matches = re.findall(pattern, prompt, re.DOTALL)
                 messages = [{"role": role, "content": content.strip()} for role, content in matches]
                 score = reward_model.get_score(messages, answer)
-                reward += score  # RM score
+                reward += score
             reward -= rep_penalty(answer)
-            rewards[idx] = max(min(reward, 3.0), -3.0)  # Clip the total score
-        # -------- With tool calls: execution result reward --------
+            rewards[idx] = max(min(reward, 3.0), -3.0)
         else:
             gt = gt_batch[sample_idx]
             valid_call_count = 0
@@ -225,18 +215,17 @@ def calculate_rewards(prompts, completions, gt_batch, tools_batch, num_gen, rewa
                 name, raw = tool_call["name"], tool_call["arguments"]
                 check = CHECK_ARGS.get(name)
                 valid_call_count += int(bool(name in valid_names and check and check(raw)))
-            tool_gap = abs(valid_call_count - len(gt)) + max(0, len(tool_calls) - valid_call_count)  # Tool count difference
-            reward += 0.5 if tool_gap == 0 else -0.5 * tool_gap  # Tool alignment score
+            tool_gap = abs(valid_call_count - len(gt)) + max(0, len(tool_calls) - valid_call_count)
+            reward += 0.5 if tool_gap == 0 else -0.5 * tool_gap
             
             final_text = "" if unfinished else (answer.split('</tool_call>')[-1] if '</tool_call>' in answer else answer)
             verified = validate_gt_in_text(final_text, gt) if gt else set()
-            if gt: reward += 2.5 * len(verified) / len(gt)  # GT score
-            if unfinished: reward -= 0.5  # Incomplete penalty
+            if gt: reward += 2.5 * len(verified) / len(gt)
+            if unfinished: reward -= 0.5
             reward -= rep_penalty(final_text if final_text else answer)
-            rewards[idx] = max(min(reward, 3.0), -3.0)  # Clip the total score
+            rewards[idx] = max(min(reward, 3.0), -3.0)
     return rewards
 
-# ================================ Tools and Reward = End ================================
 def rl_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model=None, start_step=0, wandb=None, use_sglang=False):
     for step, batch in enumerate(loader, start=start_step + 1):
         messages_batch = batch['messages']
@@ -431,7 +420,6 @@ if __name__ == "__main__":
 
     reward_model = LMForRewardModel(args.reward_model_path, device=args.device, dtype=torch.float16)
     Logger(f'Loaded reward model from {args.reward_model_path}')
-    # Rollout engine
     rollout_engine = create_rollout_engine(
         engine_type=args.rollout_engine,
         policy_model=model,
@@ -463,7 +451,6 @@ if __name__ == "__main__":
         model = torch.compile(model)
         Logger('torch.compile enabled')
     if dist.is_initialized():
-        # Same as train_ppo: the RoPE buffers are identical across ranks, so broadcasting them every step is pure waste
         model = DistributedDataParallel(model, device_ids=[local_rank], broadcast_buffers=False)
     rollout_engine.update_policy(model)
 

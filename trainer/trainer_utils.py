@@ -18,7 +18,6 @@ from torch.utils.data import Sampler
 from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
 from model.model_minimind import MiniMindForCausalLM
 
-# ======== 模型参数量 ========
 def get_model_params(model, config):
     total = sum(p.numel() for p in model.parameters()) / 1e6
     n_routed = getattr(config, 'n_routed_experts', getattr(config, 'num_experts', 0))
@@ -32,18 +31,15 @@ def get_model_params(model, config):
     else: Logger(f'Model Params: {total:.2f}M')
 
 
-# ======== 主进程判断 ========
 def is_main_process():
     return not dist.is_initialized() or dist.get_rank() == 0
 
 
-# ======== 日志 ========
 def Logger(content):
     if is_main_process():
         print(content)
 
 
-# ======== 混合精度类型 ========
 def resolve_dtype(dtype, device):
     if dtype != "bfloat16" or not torch.cuda.is_available() or torch.device(device).type != "cuda":
         return dtype
@@ -53,7 +49,6 @@ def resolve_dtype(dtype, device):
     return "float16"
 
 
-# ======== 学习率 ========
 def get_lr(current_step, total_steps, lr, warmup_ratio=0.0):
     warmup = max(1, int(warmup_ratio * total_steps)) if warmup_ratio > 0 else 0
     if current_step < warmup:
@@ -62,10 +57,9 @@ def get_lr(current_step, total_steps, lr, warmup_ratio=0.0):
     return lr * (0.1 + 0.45 * (1 + math.cos(angle)))
 
 
-# ======== 分布式初始化 ========
 def init_distributed_mode():
     if int(os.environ.get("RANK", -1)) == -1:
-        return 0  # 非DDP模式
+        return 0
 
     dist.init_process_group(backend="nccl")
     local_rank = int(os.environ["LOCAL_RANK"])
@@ -73,7 +67,6 @@ def init_distributed_mode():
     return local_rank
 
 
-# ======== 随机种子 ========
 def setup_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
@@ -84,7 +77,6 @@ def setup_seed(seed: int):
     torch.backends.cudnn.benchmark = False
 
 
-# ======== 断点保存与续训 ========
 def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoch=0, step=0, wandb=None, save_dir='../checkpoints', **kwargs):
     os.makedirs(save_dir, exist_ok=True)
     moe_path = '_moe' if lm_config.use_moe else ''
@@ -128,7 +120,7 @@ def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoc
         os.replace(resume_tmp, resume_path)
         del state_dict, resume_data
         torch.cuda.empty_cache()
-    else:  # 加载模式
+    else:
         if os.path.exists(resume_path):
             ckp_data = torch.load(resume_path, map_location='cpu')
             saved_ws = ckp_data.get('world_size', 1)
@@ -140,7 +132,6 @@ def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoc
         return None
 
 
-# ======== 模型初始化 ========
 def init_model(lm_config, from_weight='pretrain', tokenizer_path='../model', save_dir='../out', device='cuda'):
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
     model = MiniMindForCausalLM(lm_config)
@@ -156,7 +147,6 @@ def init_model(lm_config, from_weight='pretrain', tokenizer_path='../model', sav
     return model.to(device), tokenizer
 
 
-# ======== 跳过批次采样器 ========
 class SkipBatchSampler(Sampler):
     def __init__(self, sampler, batch_size, skip_batches=0):
         self.sampler = sampler
@@ -183,7 +173,6 @@ class SkipBatchSampler(Sampler):
         return max(0, total_batches - self.skip_batches)
 
 
-# ======== 奖励模型 ========
 class LMForRewardModel:
     def __init__(self, model_path, device="cuda", dtype=torch.float16):
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
@@ -204,13 +193,12 @@ class LMForRewardModel:
         return max(min(score, 3.0), -3.0)
 
 
-# ======== 数学表达式安全求值 ========
 def safe_math_eval(expression):
     """对模型生成的数学表达式求值：支持 + - * / // % **、math 白名单函数与 pi/e/tau 常量。"""
-    def pow_guard(base, exp):  # 幂运算统一走这里，拦截 9**9**9 / 10**99999 这类把进程算死的输入
+    def pow_guard(base, exp):
         if abs(exp) > 1e4 or (abs(base) > 1 and abs(exp) * math.log10(abs(base)) > 100): raise ValueError('幂运算结果过大')
         return base ** exp
-    def resolve(node):  # 同时兼容 sqrt(4) 与 math.sqrt(4) 两种写法
+    def resolve(node):
         if isinstance(node, ast.Name): return node.id
         if isinstance(node, ast.Attribute) and getattr(node.value, 'id', '') == 'math': return node.attr
     def walk(node):
@@ -234,7 +222,6 @@ def safe_math_eval(expression):
         raise ValueError('不支持的表达式语法') from None
 
 
-# ======== 重复惩罚 ========
 def rep_penalty(text, n=3, cap=0.5):
     cjk = ("\u3007\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af"
            "\U00020000-\U0002ee5f\U0002f800-\U0002fa1f\U00030000-\U0003347f")
