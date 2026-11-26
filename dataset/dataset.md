@@ -1,5 +1,5 @@
-# MiniMind Datasets
-
-将所有下载的数据集文件放置到当前目录.
-
-Place the downloaded dataset file in the current directory.
+Download the quick-reproduction data into ./dataset/
+pip install modelscope
+modelscope download --dataset gongjy/minimind_dataset \
+  --include "pretrain_t2t_mini.jsonl" "sft_t2t_mini.jsonl" \
+  --local_dir ./dataset
