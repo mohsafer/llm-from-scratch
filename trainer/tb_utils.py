@@ -25,6 +25,28 @@ class TensorBoardLogger:
         self._writer.flush()
         self._step += 1
 
+    def add_graph(self, model, input, tag='minimind'):
+        import torch
+
+        class _G(torch.nn.Module):
+            def __init__(self, m):
+                super().__init__()
+                self.m = m
+
+            def forward(self, x):
+                out = self.m.forward(x)
+                return out.logits if hasattr(out, 'logits') else out
+
+        saved = [(m, m.flash) for m in model.modules() if hasattr(m, 'flash')]
+        for m, _ in saved:
+            m.flash = False
+        try:
+            self._writer.add_graph(_G(model), input, verbose=False)
+        finally:
+            for m, v in saved:
+                m.flash = v
+        self._writer.flush()
+
     def get_run(self):
         return self
 

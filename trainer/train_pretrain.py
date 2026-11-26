@@ -144,6 +144,14 @@ if __name__ == "__main__":
         start_epoch = ckp_data['epoch']
         start_step = ckp_data.get('step', 0)
     
+    if wandb and hasattr(wandb, 'add_graph') and is_main_process():
+        try:
+            dummy_ids = torch.randint(0, lm_config.vocab_size, (1, min(32, args.max_seq_len)), device=args.device)
+            wandb.add_graph(model, dummy_ids)
+            Logger('model graph written to TensorBoard (Graph tab)')
+        except Exception as e:
+            Logger(f'add_graph skipped: {e}')
+
     if args.use_compile == 1:
         model = torch.compile(model)
         Logger('torch.compile enabled')
