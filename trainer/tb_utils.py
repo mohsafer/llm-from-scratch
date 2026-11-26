@@ -10,6 +10,7 @@ class TensorBoardLogger:
         self.project = project
         self.name = name
         run_dir = os.path.join(log_dir, project)
+        self._run_dir = run_dir
         self._writer = SummaryWriter(run_dir)
         self.id = id or uuid.uuid4().hex[:12]
         self._step = int(start_step)
@@ -40,11 +41,18 @@ class TensorBoardLogger:
         saved = [(m, m.flash) for m in model.modules() if hasattr(m, 'flash')]
         for m, _ in saved:
             m.flash = False
+        onnx_path = os.path.join(self._run_dir, '.graph_tmp.onnx')
         try:
-            self._writer.add_graph(_G(model), input, verbose=False)
+            with torch.no_grad():
+                torch.onnx.export(_G(model), (input,), onnx_path,
+                                  input_names=['input_ids'], output_names=['logits'],
+                                  opset_version=17, verbose=False)
+            self._writer.add_onnx_graph(onnx_path)
         finally:
             for m, v in saved:
                 m.flash = v
+            if os.path.exists(onnx_path):
+                os.remove(onnx_path)
         self._writer.flush()
 
     def get_run(self):
