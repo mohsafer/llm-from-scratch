@@ -1,0 +1,48 @@
+# --- Python / OS ---
+__pycache__/
+*.pyc
+.DS_Store
+
+# --- Docs / site build artifacts ---
+website/
+docs-minimind/
+
+# --- Model weights & checkpoints (large, not for git) ---
+out
+out/
+checkpoints/
+runs/
+*.pth
+*.pt
+*.ckpt
+*.bin
+*.safetensors
+
+# --- Downloaded model folders (inference) ---
+minimind-3/
+minimind-3-moe/
+
+# --- Training data (large corpora) ---
+# Only the data files are ignored; the Python source in dataset/ stays tracked.
+dataset/*.jsonl
+dataset/*.jsonl.gz
+dataset/*.csv
+dataset/*.parquet
+dataset/*.arrow
+dataset/*.bin
+
+# --- Experiment tracking logs ---
+wandb/
+swanlog/
+wandb-offline-run-*/
+
+# --- Archives & misc large artifacts ---
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.gz
+
+# --- Jupyter / IDE ---
+.ipynb_checkpoints/
